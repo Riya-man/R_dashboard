@@ -1,0 +1,148 @@
+---
+title: "Amazon Product Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(plotly)
+library(readr)
+library(reshape2)
+library(scales)
+library(shiny)
+```
+
+```{r load-data}
+# Load and clean data
+amazon <- read_csv("C:/Users/HP/Downloads/Amazon_dataset.csv")
+
+# Clean and convert columns
+amazon_clean <- amazon %>%
+  mutate(
+    discounted_price = parse_number(discounted_price),
+    actual_price = parse_number(actual_price),
+    discount_percentage = parse_number(discount_percentage),
+    rating = as.numeric(rating),
+    rating_count = parse_number(as.character(rating_count)),
+    category_main = str_split(category, "\\|", simplify = TRUE)[,1]
+  ) %>%
+  drop_na(rating, rating_count, discounted_price, actual_price)
+
+# UI filter options
+categories <- sort(unique(amazon_clean$category_main))
+```
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput("selected_category", "Select Category:", 
+            choices = c("All", categories), 
+            selected = "All")
+```
+
+```{r}
+filtered_data <- reactive({
+  if (input$selected_category == "All") {
+    amazon_clean
+  } else {
+    amazon_clean %>% filter(category_main == input$selected_category)
+  }
+})
+```
+
+Row
+-------------------------------------
+
+### 📈 Time Series - Average Price Over Products
+
+```{r, "data-height"="600", "data-width"="1000"}
+renderPlot({
+  avg_price_series <- filtered_data() %>%
+    group_by(product_id) %>%
+    summarise(avg_price = mean(discounted_price)) %>%
+    mutate(index = row_number())
+
+  ggplot(avg_price_series, aes(x = index, y = avg_price)) +
+    geom_line(color = "#0072B2", size = 1.2) +
+    geom_point(color = "#D55E00", size = 1.5, alpha = 0.7) +
+    theme_minimal(base_size = 16) +
+    labs(
+      title = "Average Price Over Products",
+      x = "Product Index",
+      y = "Average Discounted Price"
+    )
+})
+```
+
+### 📊 Bar Chart - Top 10 Categories by Count
+
+```{r, "data-height"="600", "data-width"="1000"}
+renderPlot({
+  top_categories <- filtered_data() %>%
+    count(category_main, sort = TRUE) %>%
+    top_n(10)
+
+  ggplot(top_categories, aes(x = reorder(category_main, n), y = n)) +
+    geom_col(fill = "#E69F00") +
+    coord_flip() +
+    theme_minimal(base_size = 16) +
+    labs(title = "Top 10 Categories", x = "Category", y = "Count")
+})
+```
+
+Row
+-------------------------------------
+
+### 🔍 Scatter Plot - Price vs Rating
+
+```{r, "data-height"="600", "data-width"="1000"}
+renderPlot({
+  ggplot(filtered_data(), aes(x = discounted_price, y = rating)) +
+    geom_point(alpha = 0.6, color = "#56B4E9", size = 2) +
+    theme_minimal(base_size = 16) +
+    labs(title = "Price vs Rating", x = "Discounted Price", y = "Rating")
+})
+```
+
+### 🥇 Pie Chart - Product Distribution (Top Categories)
+
+```{r, "data-height"="600", "data-width"="1000"}
+renderPlotly({
+  pie_data <- filtered_data() %>%
+    count(category_main, sort = TRUE) %>%
+    top_n(5)
+
+  plot_ly(pie_data, labels = ~category_main, values = ~n, type = 'pie') %>%
+    layout(title = "Top Category Distribution",
+           legend = list(orientation = "h", x = 0.5, xanchor = "center"))
+})
+```
+
+### 🔥 Heatmap - Correlation Matrix
+
+```{r, "data-height"="650", "data-width"="1000"}
+renderPlot({
+  numeric_data <- filtered_data() %>%
+    select(discounted_price, actual_price, discount_percentage, rating, rating_count)
+
+  corr_matrix <- round(cor(numeric_data, use = "complete.obs"), 2)
+  melted_corr <- melt(corr_matrix)
+
+  ggplot(melted_corr, aes(Var1, Var2, fill = value)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = value), color = "black", size = 4) +
+    scale_fill_gradient2(low = "#D7191C", mid = "#FFFFBF", high = "#1A9641", midpoint = 0.5) +
+    labs(title = "Correlation Heatmap", x = NULL, y = NULL) +
+    theme_minimal(base_size = 16) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+})
+```
